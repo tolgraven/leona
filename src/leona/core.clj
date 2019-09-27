@@ -15,11 +15,13 @@
 (s/def ::query-spec keyword?)
 (s/def ::mutation-spec keyword?)
 (s/def ::resolver fn?)
+(s/def ::members vector?)
 (s/def ::query (s/keys :req-un [::resolver
                                 ::query-spec]))
 (s/def ::mutation (s/keys :req-un [::resolver
                                    ::mutation-spec]))
 (s/def ::field-resolver (s/keys :req-un [::resolver]))
+(s/def ::union (s/keys :req-un [::members]))
 (s/def ::middleware (s/coll-of fn? :kind set))
 (s/def ::specs (s/coll-of keyword? :kind set))
 (s/def ::input-objects (s/coll-of keyword? :kind set))
@@ -27,6 +29,7 @@
 (s/def ::mutations (s/map-of keyword? ::mutation))
 (s/def ::field-resolvers (s/map-of keyword? ::field-resolver))
 (s/def ::type-aliases (s/map-of keyword? keyword?))
+(s/def ::unions (s/map-of keyword? ::union))
 (s/def ::parse fn?)
 (s/def ::serialize fn?)
 (s/def ::scalar-map (s/keys :req-un [::parse
@@ -39,6 +42,7 @@
                                             ::field-resolvers
                                             ::middleware
                                             ::type-aliases
+                                            ::unions
                                             ::custom-scalars]))
 (s/def ::compiled map?)
 (s/def ::compiled-data (s/keys :req-un [::compiled
@@ -128,6 +132,7 @@
    :mutations {}
    :field-resolvers {}
    :type-aliases {}
+   :unions {}
    :middleware []
    :schemas []
    :input-objects #{}
@@ -204,6 +209,14 @@
   ([m mutation-spec results-spec resolver & {:keys [doc]}]
    `(attach-internal ~m ~mutation-spec ~results-spec (var ~resolver) :mutation :doc ~doc)))
 
+(defmacro attach-union-query
+  "Adds a query and associated union into the provided pre-compiled data structure.
+   List of results-specs only for typing purposes and must be defined independently."
+  [m query-spec result-spec results-specs resolver & {:keys [doc]}]
+  `(-> ~m
+       (update :unions assoc (util/clj-name->gql-object-name ~result-spec)
+               {:members (mapv util/clj-name->gql-object-name ~results-specs)})
+       (attach-internal ~query-spec ~result-spec (var ~resolver) :query :doc ~doc)))
 
 (defn attach-schema
   "Adds an external Lacinia schema into the provided pre-compiled data structure"
@@ -338,6 +351,7 @@
         enums           (not-empty (apply merge
                                           (extract-all queries   :enums)
                                           (extract-all mutations :enums)))
+        unions          (not-empty (:unions m))
         field-resolvers (not-empty (:field-resolvers m))
         custom-scalars  (not-empty (:custom-scalars m))]
     (cond-> (apply leona-schema/combine-with-opts opts (:specs m))
@@ -352,6 +366,7 @@
             input-objects   (assoc :input-objects (-> input-objects
                                                       (transform-input-object-keys)
                                                       (replace-input-objects input-objects)))
+            unions          (assoc :unions unions)
             enums           (update :enums merge enums)
             field-resolvers (inject-field-resolvers field-resolvers)
             custom-scalars  (inject-custom-scalars custom-scalars))))
